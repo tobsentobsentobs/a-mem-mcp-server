@@ -81,7 +81,84 @@ python mcp_server.py
 5. **`add_file`** - Speichert den Inhalt einer Datei (z.B. .md) als Note, unterstützt automatisches Chunking
 6. **`reset_memory`** - Setzt das komplette Memory System zurück (⚠️ nicht rückgängig machbar)
 
-Siehe `MCP_SERVER_SETUP.md` für Details.
+### IDE Integration
+
+#### Cursor IDE
+
+1. Öffne die MCP-Konfigurationsdatei:
+   - Windows: `%APPDATA%\Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
+   - macOS: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+   - Linux: `~/.config/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+
+2. Füge folgende Konfiguration hinzu:
+
+```json
+{
+  "mcpServers": {
+    "a-mem": {
+      "command": "python",
+      "args": [
+        "-m",
+        "src.a_mem.main"
+      ],
+      "cwd": "/path/to/a-mem-agentic-memory-system"
+    }
+  }
+}
+```
+
+**Wichtig:** Passe `cwd` auf den absoluten Pfad zu deinem Projekt-Verzeichnis an!
+
+3. Starte Cursor neu, damit die Konfiguration geladen wird.
+
+#### Visual Studio Code (mit MCP Extension)
+
+1. Installiere die MCP Extension für VSCode (falls verfügbar)
+
+2. Öffne die VSCode Settings (JSON):
+   - `Ctrl+Shift+P` (Windows/Linux) oder `Cmd+Shift+P` (macOS)
+   - Tippe "Preferences: Open User Settings (JSON)"
+
+3. Füge die MCP Server Konfiguration hinzu:
+
+```json
+{
+  "mcp.servers": {
+    "a-mem": {
+      "command": "python",
+      "args": ["-m", "src.a_mem.main"],
+      "cwd": "/path/to/a-mem-agentic-memory-system"
+    }
+  }
+}
+```
+
+**Alternative:** Nutze die `mcp.json` Datei im Projekt-Root:
+
+```json
+{
+  "mcpServers": {
+    "a-mem": {
+      "command": "python",
+      "args": ["-m", "src.a_mem.main"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
+```
+
+#### Verwendung in der IDE
+
+Nach der Konfiguration stehen dir die MCP Tools direkt in der IDE zur Verfügung:
+
+- **Chat/Composer**: Nutze die Tools über natürliche Sprache
+  - "Speichere diese Information: ..."
+  - "Suche nach Memories über: ..."
+  - "Zeige mir die Memory-Statistiken"
+
+- **Code**: Die Tools werden automatisch als Funktionen verfügbar
+
+Siehe `MCP_SERVER_SETUP.md` für detaillierte Informationen zu allen verfügbaren Tools.
 
 ## 📚 Dokumentation
 
