@@ -28,3 +28,6 @@ pandas>=2.0.0
 # HTTP Server (optional, für Script-Zugriff)
 aiohttp>=3.9.0
 
+# CLI Enhancements (optional, für amem_stats)
+rich>=13.0.0
+

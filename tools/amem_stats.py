@@ -29,6 +29,17 @@ try:
 except ImportError:
     HAS_AIOHTTP = False
 
+try:
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+    from rich.text import Text
+    HAS_RICH = True
+except ImportError:
+    HAS_RICH = False
+
+# Initialize console if rich is available
+console = Console() if HAS_RICH else None
+
 
 def format_time_ago(timestamp_str: str) -> str:
     """Formats a timestamp as 'X min ago' or 'X hours ago'."""
@@ -300,9 +311,12 @@ def save_current_stats(stats: Dict[str, Any], last_enzyme: Optional[Dict[str, An
 
 
 def print_diff_status(stats: Dict[str, Any], previous: Optional[Dict[str, Any]]):
-    """Prints diff between current and previous stats."""
+    """Prints diff between current and previous stats with color."""
     if not previous:
-        print("No previous stats found. This will be the baseline for future diffs.")
+        if HAS_RICH:
+            console.print("No previous stats found. This will be the baseline for future diffs.", style="yellow")
+        else:
+            print("No previous stats found. This will be the baseline for future diffs.")
         return
     
     notes_diff = stats["notes"] - previous.get("notes", 0)
@@ -316,10 +330,33 @@ def print_diff_status(stats: Dict[str, Any], previous: Optional[Dict[str, Any]])
             return str(value)
         return "0"
     
-    print(f"{format_diff(notes_diff)} notes | {format_diff(relations_diff)} relations | {format_diff(zombie_diff)} zombie nodes")
+    def format_diff_colored(value: int, label: str) -> Text:
+        """Returns colored diff text."""
+        if value > 0:
+            return Text(f"+{value} {label}", style="green")
+        elif value < 0:
+            return Text(f"{value} {label}", style="red")
+        else:
+            return Text(f"0 {label}", style="dim")
+    
+    if HAS_RICH:
+        # Color output with rich
+        output = Text()
+        output.append(format_diff_colored(notes_diff, "notes"))
+        output.append(" | ", style="dim")
+        output.append(format_diff_colored(relations_diff, "relations"))
+        output.append(" | ", style="dim")
+        output.append(format_diff_colored(zombie_diff, "zombie nodes"))
+        console.print(output)
+    else:
+        # Fallback: plain text
+        print(f"{format_diff(notes_diff)} notes | {format_diff(relations_diff)} relations | {format_diff(zombie_diff)} zombie nodes")
     
     if notes_diff == 0 and relations_diff == 0 and zombie_diff == 0:
-        print("No changes since last check.")
+        if HAS_RICH:
+            console.print("No changes since last check.", style="dim")
+        else:
+            print("No changes since last check.")
 
 
 async def main_async():
@@ -378,7 +415,11 @@ Examples:
         try:
             while True:
                 clear_screen()
-                print(f"🧠 A-MEM Graph Status (refreshing every {args.watch}s, Ctrl+C to stop)\n")
+                
+                if HAS_RICH:
+                    console.print(f"[bold cyan]🧠 A-MEM Graph Status[/bold cyan] [dim](refreshing every {args.watch}s, Ctrl+C to stop)[/dim]\n")
+                else:
+                    print(f"🧠 A-MEM Graph Status (refreshing every {args.watch}s, Ctrl+C to stop)\n")
                 
                 # Get stats
                 stats = await get_stats_from_http()
@@ -408,9 +449,32 @@ Examples:
                 else:
                     print_graph_status(stats, last_enzyme)
                 
-                time.sleep(args.watch)
+                # Progress bar for next refresh
+                if HAS_RICH:
+                    with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        BarColumn(),
+                        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                        TimeRemainingColumn(),
+                        console=console,
+                        transient=True
+                    ) as progress:
+                        task = progress.add_task(f"[cyan]Next refresh in {args.watch}s...", total=args.watch)
+                        for i in range(args.watch):
+                            time.sleep(1)
+                            progress.update(task, advance=1)
+                else:
+                    # Fallback: simple countdown
+                    for i in range(args.watch, 0, -1):
+                        print(f"\rRefreshing in {i}s...", end="", flush=True)
+                        time.sleep(1)
+                    print("\r" + " " * 30 + "\r", end="")  # Clear line
         except KeyboardInterrupt:
-            print("\n\nStopped.")
+            if HAS_RICH:
+                console.print("\n\n[dim]Stopped.[/dim]")
+            else:
+                print("\n\nStopped.")
             return
     
     # Try HTTP first (live data from running server)
@@ -503,7 +567,11 @@ Examples:
         try:
             while True:
                 clear_screen()
-                print(f"🧠 A-MEM Graph Status (refreshing every {args.watch}s, Ctrl+C to stop)\n")
+                
+                if HAS_RICH:
+                    console.print(f"[bold cyan]🧠 A-MEM Graph Status[/bold cyan] [dim](refreshing every {args.watch}s, Ctrl+C to stop)[/dim]\n")
+                else:
+                    print(f"🧠 A-MEM Graph Status (refreshing every {args.watch}s, Ctrl+C to stop)\n")
                 
                 stats = get_stats_from_storage()
                 last_enzyme = get_last_enzyme_run()
@@ -528,9 +596,32 @@ Examples:
                 else:
                     print_graph_status(stats, last_enzyme)
                 
-                time.sleep(args.watch)
+                # Progress bar for next refresh
+                if HAS_RICH:
+                    with Progress(
+                        SpinnerColumn(),
+                        TextColumn("[progress.description]{task.description}"),
+                        BarColumn(),
+                        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                        TimeRemainingColumn(),
+                        console=console,
+                        transient=True
+                    ) as progress:
+                        task = progress.add_task(f"[cyan]Next refresh in {args.watch}s...", total=args.watch)
+                        for i in range(args.watch):
+                            time.sleep(1)
+                            progress.update(task, advance=1)
+                else:
+                    # Fallback: simple countdown
+                    for i in range(args.watch, 0, -1):
+                        print(f"\rRefreshing in {i}s...", end="", flush=True)
+                        time.sleep(1)
+                    print("\r" + " " * 30 + "\r", end="")  # Clear line
         except KeyboardInterrupt:
-            print("\n\nStopped.")
+            if HAS_RICH:
+                console.print("\n\n[dim]Stopped.[/dim]")
+            else:
+                print("\n\nStopped.")
             return
     
     if HAS_AIOHTTP:
