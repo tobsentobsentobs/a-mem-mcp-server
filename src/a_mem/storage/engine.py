@@ -85,7 +85,8 @@ class GraphStore:
             relation.target_id, 
             type=relation.relation_type,
             reasoning=relation.reasoning,
-            weight=relation.weight
+            weight=relation.weight,
+            created_at=relation.created_at.isoformat()  # Store as ISO string for JSON serialization
         )
 
     def update_node(self, note: AtomicNote):

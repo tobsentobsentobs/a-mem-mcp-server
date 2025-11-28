@@ -14,6 +14,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 from .core.logic import MemoryController
 from .models.note import NoteInput
+from .utils.enzymes import run_memory_enzymes
 
 # Server initialisieren
 server = Server("a-mem")
@@ -25,7 +26,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="create_atomic_note",
-            description="Stores a new piece of information in the memory system. Automatically starts the linking and evolution process in the background.",
+            description="Stores a new piece of information in the memory system. Automatically classifies the note type (rule, procedure, concept, tool, reference, integration), extracts metadata, and starts the linking and evolution process in the background.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -44,7 +45,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="retrieve_memories",
-            description="Searches for relevant memories based on semantic similarity. Returns the best matches with linked contexts.",
+            description="Searches for relevant memories based on semantic similarity with priority scoring. Returns the best matches with linked contexts, ranked by combined similarity and priority score.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -69,20 +70,6 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {}
-            }
-        ),
-        Tool(
-            name="delete_atomic_note",
-            description="Deletes a note from the memory system. Removes the note from Graph and Vector Store as well as all associated connections.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "note_id": {
-                        "type": "string",
-                        "description": "The UUID of the note to be deleted."
-                    }
-                },
-                "required": ["note_id"]
             }
         ),
         Tool(
@@ -116,6 +103,134 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {}
+            }
+        ),
+        Tool(
+            name="list_notes",
+            description="Lists all stored notes from the memory graph.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="get_note",
+            description="Returns a single note (metadata + content) by id.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "string",
+                        "description": "The UUID of the note."
+                    }
+                },
+                "required": ["note_id"]
+            }
+        ),
+        Tool(
+            name="update_note",
+            description="Updates contextual summary, tags or keywords for an existing note.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {"type": "string"},
+                    "data": {
+                        "type": "object",
+                        "description": "Fields to update (contextual_summary, tags, keywords)."
+                    }
+                },
+                "required": ["note_id", "data"]
+            }
+        ),
+        Tool(
+            name="delete_atomic_note",
+            description="Deletes a note from the memory system. Removes the note from Graph and Vector Store as well as all associated connections.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "string",
+                        "description": "The UUID of the note to be deleted."
+                    }
+                },
+                "required": ["note_id"]
+            }
+        ),
+        Tool(
+            name="list_relations",
+            description="Lists relations in the memory graph, optionally filtered by note id.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "string",
+                        "description": "Optional note id filter"
+                    }
+                }
+            }
+        ),
+        Tool(
+            name="add_relation",
+            description="Adds a manual relation between two notes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "target_id": {"type": "string"},
+                    "relation_type": {"type": "string"},
+                    "reasoning": {"type": "string"},
+                    "weight": {"type": "number"}
+                },
+                "required": ["source_id", "target_id"]
+            }
+        ),
+        Tool(
+            name="remove_relation",
+            description="Removes a relation between two notes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string"},
+                    "target_id": {"type": "string"}
+                },
+                "required": ["source_id", "target_id"]
+            }
+        ),
+        Tool(
+            name="get_graph",
+            description="Returns the full graph snapshot (nodes + edges).",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        Tool(
+            name="run_memory_enzymes",
+            description="Runs memory maintenance enzymes: prunes old/weak links, suggests new relations, and digests overcrowded nodes. Automatically optimizes the graph structure.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prune_max_age_days": {
+                        "type": "integer",
+                        "description": "Maximum age in days for edges to be pruned (default: 90).",
+                        "default": 90
+                    },
+                    "prune_min_weight": {
+                        "type": "number",
+                        "description": "Minimum weight for edges to be kept (default: 0.3).",
+                        "default": 0.3
+                    },
+                    "suggest_threshold": {
+                        "type": "number",
+                        "description": "Minimum similarity threshold for relation suggestions (default: 0.75).",
+                        "default": 0.75
+                    },
+                    "suggest_max": {
+                        "type": "integer",
+                        "description": "Maximum number of relation suggestions (default: 10).",
+                        "default": 10
+                    }
+                }
             }
         )
     ]
@@ -179,7 +294,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
                     "summary": res.note.contextual_summary,
                     "keywords": res.note.keywords,
                     "tags": res.note.tags,
-                    "relevance_score": float(res.score),
+                    "type": res.note.type,  # Node classification
+                    "relevance_score": float(res.score),  # Combined similarity × priority
                     "connected_memories": len(res.related_notes),
                     "connected_context": context_str
                 })
@@ -213,41 +329,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
             return [TextContent(
                 type="text",
                 text=json.dumps(stats, indent=2)
-            )]
-        except Exception as e:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": str(e)}, indent=2)
-            )]
-    
-    elif name == "delete_atomic_note":
-        note_id = arguments.get("note_id", "")
-        
-        if not note_id:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": "note_id is required"}, indent=2)
-            )]
-        
-        try:
-            success = await controller.delete_note(note_id)
-            
-            if success:
-                result = {
-                    "status": "success",
-                    "note_id": note_id,
-                    "message": f"Note {note_id} deleted successfully. All connections removed."
-                }
-            else:
-                result = {
-                    "status": "error",
-                    "note_id": note_id,
-                    "message": f"Note {note_id} not found or could not be deleted."
-                }
-            
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, indent=2)
             )]
         except Exception as e:
             return [TextContent(
@@ -370,6 +451,153 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
                 text=json.dumps({"error": str(e)}, indent=2)
             )]
     
+    elif name == "list_notes":
+        notes = await controller.list_notes_data()
+        return [TextContent(
+            type="text",
+            text=json.dumps({"notes": notes}, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "get_note":
+        note_id = arguments.get("note_id", "")
+        if not note_id:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "note_id is required"}, indent=2)
+            )]
+        note = await controller.get_note_data(note_id)
+        if not note:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": f"Note '{note_id}' not found"}, indent=2)
+            )]
+        return [TextContent(
+            type="text",
+            text=json.dumps({"note": note}, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "update_note":
+        note_id = arguments.get("note_id", "")
+        data = arguments.get("data", {})
+        if not note_id:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "note_id is required"}, indent=2)
+            )]
+        if not isinstance(data, dict):
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "data must be an object"}, indent=2)
+            )]
+        result = await controller.update_note_metadata(note_id, data)
+        return [TextContent(
+            type="text",
+            text=json.dumps(result, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "delete_atomic_note":
+        note_id = arguments.get("note_id", "")
+        if not note_id:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "note_id is required"}, indent=2)
+            )]
+        result = await controller.delete_note_data(note_id)
+        return [TextContent(
+            type="text",
+            text=json.dumps(result, indent=2)
+        )]
+    
+    elif name == "list_relations":
+        note_id = arguments.get("note_id")
+        relations = await controller.list_relations_data(note_id)
+        return [TextContent(
+            type="text",
+            text=json.dumps({"relations": relations}, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "add_relation":
+        source = arguments.get("source_id", "")
+        target = arguments.get("target_id", "")
+        relation_type = arguments.get("relation_type", "relates_to")
+        reasoning = arguments.get("reasoning", "Manual link")
+        weight = float(arguments.get("weight", 1.0))
+        if not source or not target:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "source_id and target_id are required"}, indent=2)
+            )]
+        result = await controller.add_relation(source, target, relation_type, reasoning, weight)
+        return [TextContent(
+            type="text",
+            text=json.dumps(result, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "remove_relation":
+        source = arguments.get("source_id", "")
+        target = arguments.get("target_id", "")
+        if not source or not target:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": "source_id and target_id are required"}, indent=2)
+            )]
+        result = await controller.remove_relation(source, target)
+        return [TextContent(
+            type="text",
+            text=json.dumps(result, indent=2)
+        )]
+    
+    elif name == "get_graph":
+        graph = await controller.get_graph_snapshot()
+        return [TextContent(
+            type="text",
+            text=json.dumps(graph, indent=2, ensure_ascii=False)
+        )]
+    
+    elif name == "run_memory_enzymes":
+        try:
+            prune_max_age = arguments.get("prune_max_age_days", 90)
+            prune_min_weight = arguments.get("prune_min_weight", 0.3)
+            suggest_threshold = arguments.get("suggest_threshold", 0.75)
+            suggest_max = arguments.get("suggest_max", 10)
+            
+            # Run enzymes synchronously (in thread)
+            import asyncio
+            loop = asyncio.get_running_loop()
+            
+            def _run_enzymes():
+                return run_memory_enzymes(
+                    controller.storage.graph,
+                    controller.llm,
+                    prune_config={
+                        "max_age_days": prune_max_age,
+                        "min_weight": prune_min_weight
+                    },
+                    suggest_config={
+                        "threshold": suggest_threshold,
+                        "max_suggestions": suggest_max
+                    }
+                )
+            
+            results = await loop.run_in_executor(None, _run_enzymes)
+            
+            # Save graph after enzymes
+            await loop.run_in_executor(None, controller.storage.graph.save_snapshot)
+            
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "status": "success",
+                    "results": results,
+                    "message": f"Enzymes completed: {results['pruned_count']} links pruned, {results['suggestions_count']} relations suggested, {results['digested_count']} nodes digested."
+                }, indent=2)
+            )]
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"error": str(e)}, indent=2)
+            )]
+    
     else:
         return [TextContent(
             type="text",
@@ -378,12 +606,19 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextConten
 
 async def main():
     """Main function for the MCP Server."""
+    # Starte automatischen Enzyme-Scheduler (alle 1 Stunde)
+    controller.start_enzyme_scheduler(interval_hours=1.0)
+    
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+        try:
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options()
+            )
+        finally:
+            # Stoppe Scheduler beim Shutdown
+            controller.stop_enzyme_scheduler()
 
 if __name__ == "__main__":
     asyncio.run(main())

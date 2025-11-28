@@ -8,12 +8,24 @@ An agentic memory system for LLM agents based on the Zettelkasten principle.
 
 ## 🚀 Features
 
+### Core Features
 - ✅ **Note Construction**: Automatic extraction of keywords, tags, and contextual summary
 - ✅ **Link Generation**: Automatic linking of similar memories
 - ✅ **Memory Evolution**: Dynamic updating of existing memories
 - ✅ **Semantic Retrieval**: Intelligent search with graph traversal
 - ✅ **Multi-Provider Support**: Ollama (local) or OpenRouter (cloud)
 - ✅ **Environment Variables**: Configuration via `.env` file
+
+### Advanced Features (New)
+- ✅ **Type Classification**: Automatic classification of notes into 6 types (rule, procedure, concept, tool, reference, integration)
+- ✅ **Priority Scoring**: On-the-fly priority calculation based on type, age, usage, and edge count for better search rankings
+- ✅ **Event Logging**: Append-only JSONL event log for all critical operations (NOTE_CREATED, RELATION_CREATED, MEMORY_EVOLVED)
+- ✅ **Memory Enzymes**: Autonomous background processes for graph maintenance
+  - **Link Pruner**: Removes old/weak edges automatically
+  - **Relation Suggester**: Finds new semantic connections between notes
+  - **Summary Digester**: Compresses overcrowded nodes with many children
+- ✅ **Automatic Scheduler**: Runs memory enzymes every hour in the background
+- ✅ **Metadata Field**: Experimental fields support without schema changes
 
 ## 🔄 Relationship to Original Implementation
 
@@ -56,6 +68,45 @@ The framework of our Agentic Memory system showing the dynamic interaction betwe
 ![Framework](framework_extended.jpg)
 
 *The framework diagram illustrates the core memory system workflow: Note Construction (left), Memory Processing with MCP Server Integration (center), and Memory Retrieval (right). Our implementation extends the original framework with direct IDE integration via MCP protocol, explicit graph-based memory linking using NetworkX DiGraph with typed edges (relation_type, reasoning, weight), file import with automatic chunking, and a dual-storage architecture using ChromaDB for vector similarity search and NetworkX for explicit typed relationships.*
+
+## 🆕 New Features Overview
+
+### Type Classification
+Every note is automatically classified into one of 6 types:
+- **rule**: Imperative instructions ("Never X", "Always Y")
+- **procedure**: Numbered steps or sequential instructions
+- **concept**: Explanations of concepts, no commands
+- **tool**: Describes functions, APIs, or utilities
+- **reference**: Tables, comparison lists, cheatsheets
+- **integration**: Describes connections between systems
+
+### Priority Scoring
+Search results are ranked using on-the-fly priority calculation:
+- **Type Weight**: Rules and procedures have higher priority
+- **Age Factor**: Newer notes have higher priority
+- **Usage Count**: Frequently accessed notes get boosted
+- **Edge Count**: Well-connected notes are prioritized
+
+### Event Logging
+All critical operations are logged to `data/events.jsonl`:
+- `NOTE_CREATED`: When a new note is created
+- `RELATION_CREATED`: When two notes are linked
+- `MEMORY_EVOLVED`: When an existing note is updated
+- `LINKS_PRUNED`: When old/weak links are removed
+- `RELATIONS_SUGGESTED`: When new connections are found
+- `ENZYME_SCHEDULER_RUN`: When automatic maintenance runs
+
+### Memory Enzymes
+Autonomous background processes that maintain graph health:
+- **Link Pruner**: Removes edges older than 90 days or with weight < 0.3
+- **Relation Suggester**: Finds semantically similar notes (cosine similarity ≥ 0.75)
+- **Summary Digester**: Compresses nodes with >8 children into compact summaries
+
+### Automatic Scheduler
+The system automatically runs memory enzymes every hour:
+- Runs in background without blocking MCP operations
+- Logs all maintenance activities
+- Gracefully handles errors and continues running
 
 ## 📋 Installation
 
@@ -114,14 +165,31 @@ Make sure Ollama is running on `http://localhost:11434`.
 python mcp_server.py
 ```
 
-### Available Tools
+### Available Tools (14 Total)
 
-1. **`create_atomic_note`** - Stores a new piece of information in the memory system
-2. **`retrieve_memories`** - Searches for relevant memories based on semantic similarity
-3. **`get_memory_stats`** - Returns statistics about the memory system
-4. **`delete_atomic_note`** - Deletes a note from the memory system
-5. **`add_file`** - Stores the content of a file (e.g., .md) as a note, supports automatic chunking
-6. **`reset_memory`** - Resets the complete memory system (⚠️ irreversible)
+#### Core Memory Operations
+1. **`create_atomic_note`** - Stores a new piece of information. Automatically classifies note type, extracts metadata, and starts linking/evolution in background
+2. **`retrieve_memories`** - Searches for relevant memories with priority scoring. Returns best matches ranked by combined similarity and priority
+3. **`get_memory_stats`** - Returns statistics about the memory system (nodes, edges, etc.)
+4. **`add_file`** - Stores file content as notes with automatic chunking for large files (>16KB)
+5. **`reset_memory`** - Resets the complete memory system (⚠️ irreversible)
+
+#### Note Management
+6. **`list_notes`** - Lists all stored notes from the memory graph
+7. **`get_note`** - Returns a single note (metadata + content) by ID
+8. **`update_note`** - Updates contextual summary, tags, or keywords for an existing note
+9. **`delete_atomic_note`** - Deletes a note and all associated connections
+
+#### Relation Management
+10. **`list_relations`** - Lists relations in the graph, optionally filtered by note ID
+11. **`add_relation`** - Adds a manual relation between two notes
+12. **`remove_relation`** - Removes a relation between two notes
+
+#### Graph Operations
+13. **`get_graph`** - Returns the full graph snapshot (nodes + edges) for visualization
+
+#### Memory Maintenance
+14. **`run_memory_enzymes`** - Runs memory maintenance: prunes old/weak links, suggests new relations, digests overcrowded nodes. Automatically optimizes graph structure
 
 ### IDE Integration
 
@@ -202,19 +270,50 @@ After configuration, the MCP tools are directly available in your IDE:
 
 See `MCP_SERVER_SETUP.md` for detailed information about all available tools.
 
+### Event Log
+
+All system events are automatically logged to `data/events.jsonl` in JSONL format (one JSON object per line). This provides a complete audit trail of:
+- Note creation and updates
+- Relation creation and removal
+- Memory evolution events
+- Enzyme maintenance runs
+- Scheduler activities
+
+You can view the event log with:
+```bash
+# View last 10 events
+tail -n 10 data/events.jsonl
+
+# View all events
+cat data/events.jsonl | jq .
+```
+
 ## 📚 Documentation
 
 - `MCP_SERVER_SETUP.md` - MCP Server Setup and Configuration
 - `docs/TEST_REPORT.md` - Test Results
 - `docs/MCP_SERVER_TEST_REPORT.md` - MCP Server Integration Tests
 - `docs/EMBEDDING_DIMENSIONS.md` - Embedding Dimension Handling Guide
-
 ## 🧪 Tests
 
 ```bash
+# Core functionality tests
 python tests/test_a_mem.py
+
+# Code structure tests
 python tests/test_code_structure.py
+
+# New features tests (Type Classification, Priority Scoring, Event Logging)
+python tests/test_new_features.py
+
+# Memory enzymes tests (Link Pruner, Relation Suggester, Digest Node)
+python tests/test_enzymes.py
+
+# Scheduler tests
+python tests/test_scheduler.py
 ```
+
+**Test Results:** 24/24 tests passed ✅
 
 ## 🧪 Benchmarking
 
@@ -231,11 +330,15 @@ See `BENCHMARK_README.md` for details.
 ## 📊 Status
 
 ✅ **100% Paper-Compliance**  
-✅ **All Tests Passed**  
+✅ **All Tests Passed** (24/24 tests)  
 ✅ **Modular Structure**  
 ✅ **Multi-Provider Support** (Ollama + OpenRouter)  
-✅ **MCP Server Integration**  
-✅ **Memory Reset & Management Tools**
+✅ **MCP Server Integration** (14 Tools)  
+✅ **Memory Reset & Management Tools**  
+✅ **Type Classification & Priority Scoring**  
+✅ **Event Logging & Audit Trail**  
+✅ **Memory Enzymes (Autonomous Graph Maintenance)**  
+✅ **Automatic Scheduler (Hourly Maintenance)**
 
 ## 📄 License
 

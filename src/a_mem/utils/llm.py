@@ -176,25 +176,37 @@ class LLMService:
             return self._get_embedding_ollama(text)
 
     def extract_metadata(self, content: str) -> dict:
-        """Extracts metadata (Summary, Keywords, Tags) via LLM (provider-dependent)."""
+        """Extracts metadata (Summary, Keywords, Tags, Type) via LLM (provider-dependent)."""
         prompt = f"""Analyze this memory fragment: "{content}"
 
 Return a valid JSON object with these exact keys:
 - "summary": A short contextual summary (max 100 characters)
 - "keywords": A list of 3-5 key terms
 - "tags": A list of 2-3 category tags
+- "type": One of: "rule", "procedure", "concept", "tool", "reference", "integration"
+  * "rule": Contains imperative instructions ("Never X", "Always Y")
+  * "procedure": Contains numbered steps or sequential instructions
+  * "concept": Explains something, no commands
+  * "tool": Describes functions, APIs, or utilities
+  * "reference": Contains tables, comparison lists, cheatsheets
+  * "integration": Describes connections between systems
 
 Example format:
-{{"summary": "Brief summary here", "keywords": ["term1", "term2"], "tags": ["category1", "category2"]}}
+{{"summary": "Brief summary here", "keywords": ["term1", "term2"], "tags": ["category1", "category2"], "type": "concept"}}
 
 Return ONLY the JSON object, no markdown formatting, no explanations."""
         
         try:
             response_text = self._call_llm(prompt)
-            return self._clean_json_response(response_text)
+            data = self._clean_json_response(response_text)
+            # Validate type
+            valid_types = {"rule", "procedure", "concept", "tool", "reference", "integration"}
+            if "type" in data and data["type"] not in valid_types:
+                data["type"] = "concept"  # Default fallback
+            return data
         except Exception as e:
             print(f"LLM Extraction Error: {e}")
-            return {"summary": content[:50]+"...", "keywords": [], "tags": []}
+            return {"summary": content[:50]+"...", "keywords": [], "tags": [], "type": "concept"}
 
     def check_link(self, note_a: AtomicNote, note_b: AtomicNote) -> Tuple[bool, Optional[NoteRelation]]:
         """Checks if two notes should be linked."""
@@ -274,7 +286,9 @@ Return ONLY the JSON object, no markdown formatting, no explanations."""
                     contextual_summary=data.get("updated_summary", existing_note.contextual_summary),
                     keywords=data.get("updated_keywords", existing_note.keywords),
                     tags=data.get("updated_tags", existing_note.tags),
-                    created_at=existing_note.created_at  # Original timestamp beibehalten
+                    created_at=existing_note.created_at,  # Original timestamp beibehalten
+                    type=existing_note.type,  # Type stays the same
+                    metadata=existing_note.metadata  # Metadata stays the same
                 )
                 return evolved_note
         except Exception as e:
