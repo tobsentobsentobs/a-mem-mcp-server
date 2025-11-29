@@ -22,6 +22,13 @@ class NoteInput(BaseModel):
     """Input vom User via MCP Tool."""
     content: str
     source: Optional[str] = "user_input"
+    # Optional: Pre-extracted metadata (e.g. from ResearcherAgent)
+    # If provided, create_note will use these instead of LLM extraction
+    contextual_summary: Optional[str] = None
+    keywords: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 class NoteRelation(BaseModel):
     """Definiert eine Kante im Graphen."""

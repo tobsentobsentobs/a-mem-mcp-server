@@ -5,6 +5,7 @@ Implements Async Non-Blocking I/O using `run_in_executor` and Batch-Saving strat
 """
 
 import asyncio
+import sys
 from typing import Any, Dict, List, Optional
 from ..storage.engine import StorageManager
 from ..utils.llm import LLMService
@@ -12,6 +13,12 @@ from ..models.note import AtomicNote, NoteInput, NoteRelation, SearchResult
 from ..utils.serializers import serialize_note
 from ..utils.priority import log_event, compute_priority
 from ..utils.enzymes import run_memory_enzymes
+from ..config import settings
+
+# Helper function to print to stderr (MCP uses stdout for JSON-RPC)
+def log_debug(message: str):
+    """Logs debug messages to stderr to avoid breaking MCP JSON-RPC on stdout."""
+    print(message, file=sys.stderr)
 
 class MemoryController:
     def __init__(self):
@@ -27,21 +34,41 @@ class MemoryController:
         """
         Phase 1: Creation. 
         Critical I/O operations are offloaded to threads.
+        
+        If input_data contains pre-extracted metadata (e.g. from ResearcherAgent),
+        uses those instead of LLM extraction for efficiency.
         """
         loop = asyncio.get_running_loop()
 
-        # 1. CPU-Bound / Network Ops (LLM)
-        # LLM calls sind meist intern async oder schnell genug, hier sync wrapper
-        metadata = await loop.run_in_executor(None, self.llm.extract_metadata, input_data.content)
-        
-        # 2. Objekt Erstellung
-        note = AtomicNote(
-            content=input_data.content,
-            contextual_summary=metadata.get("summary", ""),
-            keywords=metadata.get("keywords", []),
-            tags=metadata.get("tags", []),
-            type=metadata.get("type")  # Optional: rule, procedure, concept, tool, reference, integration
-        )
+        # 1. Check if metadata is already provided (e.g. from ResearcherAgent)
+        # If yes, skip LLM extraction; if no, extract via LLM
+        if (input_data.contextual_summary is not None or 
+            input_data.keywords is not None or 
+            input_data.tags is not None or 
+            input_data.type is not None):
+            # Use provided metadata (e.g. from ResearcherAgent)
+            log_debug(f"[CREATE_NOTE] Using pre-extracted metadata from {input_data.source}")
+            note = AtomicNote(
+                content=input_data.content,
+                contextual_summary=input_data.contextual_summary or "",
+                keywords=input_data.keywords or [],
+                tags=input_data.tags or [],
+                type=input_data.type,
+                metadata=input_data.metadata or {}
+            )
+        else:
+            # No metadata provided - extract via LLM (standard flow)
+            log_debug(f"[CREATE_NOTE] Extracting metadata via LLM for {input_data.source}")
+            metadata = await loop.run_in_executor(None, self.llm.extract_metadata, input_data.content)
+            
+            # 2. Objekt Erstellung
+            note = AtomicNote(
+                content=input_data.content,
+                contextual_summary=metadata.get("summary", ""),
+                keywords=metadata.get("keywords", []),
+                tags=metadata.get("tags", []),
+                type=metadata.get("type")  # Optional: rule, procedure, concept, tool, reference, integration
+            )
         
         # 3. Embedding calculation (Paper Section 3.1, Formula 3):
         # ei = fenc[concat(ci, Ki, Gi, Xi)]
@@ -55,7 +82,7 @@ class MemoryController:
         
         # Explicit snapshot save after adding (so visualizer can see new notes)
         await loop.run_in_executor(None, self.storage.graph.save_snapshot)
-        print(f"[SAVE] Graph saved after creating note {note.id}")
+        log_debug(f"[SAVE] Graph saved after creating note {note.id}")
         
         # 5. Event Logging
         log_event("NOTE_CREATED", {
@@ -76,7 +103,7 @@ class MemoryController:
         Batch-Update strategy for the graph.
         """
         loop = asyncio.get_running_loop()
-        print(f"[EVOLVE] Evolving memory for note {new_note.id}...")
+        log_debug(f"[EVOLVE] Evolving memory for note {new_note.id}...")
         
         try:
             # 1. Candidate search (I/O in thread)
@@ -104,7 +131,7 @@ class MemoryController:
                 )
                 
                 if is_related and relation:
-                    print(f"[LINK] Linking {new_note.id} -> {c_id} ({relation.relation_type})")
+                    log_debug(f"[LINK] Linking {new_note.id} -> {c_id} ({relation.relation_type})")
                     # In-Memory Update (fast)
                     self.storage.graph.add_edge(relation)
                     links_found += 1
@@ -124,7 +151,7 @@ class MemoryController:
                 )
                 
                 if evolved_note:
-                    print(f"[EVOLVE] Evolving memory {candidate_note.id} based on new information")
+                    log_debug(f"[EVOLVE] Evolving memory {candidate_note.id} based on new information")
                     
                     # Calculate new embedding (Paper Section 3.1, Formula 3):
                     # ei = fenc[concat(ci, Ki, Gi, Xi)]
@@ -157,13 +184,13 @@ class MemoryController:
             # Always save after evolution so visualizer can see updates
             await loop.run_in_executor(None, self.storage.graph.save_snapshot)
             if links_found > 0 or evolutions_found > 0:
-                print(f"[OK] Evolution finished. {links_found} links, {evolutions_found} memory updates saved.")
+                log_debug(f"[OK] Evolution finished. {links_found} links, {evolutions_found} memory updates saved.")
             else:
-                print("[OK] Evolution finished. No new links or updates.")
-            print(f"[SAVE] Graph saved after evolution")
+                log_debug("[OK] Evolution finished. No new links or updates.")
+            log_debug(f"[SAVE] Graph saved after evolution")
 
         except Exception as e:
-            print(f"[ERROR] Evolution failed for {new_note.id}: {e}")
+            log_debug(f"[ERROR] Evolution failed for {new_note.id}: {e}")
 
     async def retrieve(self, query: str) -> List[SearchResult]:
         loop = asyncio.get_running_loop()
@@ -206,7 +233,7 @@ class MemoryController:
                     related_notes.append(related_note)
                 except Exception as e:
                     # Skip invalid nodes (e.g., corrupted by evolution)
-                    print(f"Warning: Skipping invalid neighbor node: {e}")
+                    log_debug(f"Warning: Skipping invalid neighbor node: {e}")
                     continue
             
             results.append(SearchResult(
@@ -214,11 +241,78 @@ class MemoryController:
                 score=combined_score,  # Use combined score instead of raw similarity
                 related_notes=related_notes
             ))
-        
+            
         # Sort by combined score (highest first)
         results.sort(key=lambda x: x.score, reverse=True)
         
+        # Researcher Agent Integration (Hybrid Approach)
+        # Trigger researcher if confidence is low and researcher is enabled
+        if settings.RESEARCHER_ENABLED and len(results) > 0:
+            top_score = results[0].score if results else 0.0
+            if top_score < settings.RESEARCHER_CONFIDENCE_THRESHOLD:
+                # Trigger researcher asynchronously (non-blocking)
+                # Research happens in background, results are stored automatically
+                asyncio.create_task(self._trigger_researcher(query, top_score))
+        
         return results
+    
+    async def _trigger_researcher(self, query: str, confidence_score: float):
+        """
+        Triggers the Researcher Agent when retrieval confidence is low.
+        Runs asynchronously in background, stores results automatically.
+        """
+        try:
+            from ..utils.researcher import ResearcherAgent
+            from ..utils.priority import log_event
+            
+            log_debug(f"[RESEARCHER] Low confidence ({confidence_score:.2f}) - triggering research for: {query}")
+            log_event("RESEARCHER_TRIGGERED", {
+                "query": query,
+                "confidence_score": confidence_score,
+                "threshold": settings.RESEARCHER_CONFIDENCE_THRESHOLD
+            })
+            
+            researcher = ResearcherAgent(llm_service=self.llm)
+            research_notes = await researcher.research(
+                query=query,
+                context=f"Low confidence retrieval (score: {confidence_score:.2f})"
+            )
+            
+            # Store research notes automatically
+            notes_stored = 0
+            for note in research_notes:
+                try:
+                    # Pass full metadata from ResearcherAgent (avoids duplicate LLM extraction)
+                    note_input = NoteInput(
+                        content=note.content,
+                        source="researcher_agent",
+                        contextual_summary=note.contextual_summary,
+                        keywords=note.keywords,
+                        tags=note.tags,
+                        type=note.type,
+                        metadata=note.metadata
+                    )
+                    # Use create_note to store (includes evolution, linking, etc.)
+                    note_id = await self.create_note(note_input)
+                    notes_stored += 1
+                    log_debug(f"[RESEARCHER] Stored note: {note_id[:8]}...")
+                except Exception as e:
+                    log_debug(f"[RESEARCHER] Error storing note: {e}")
+                    continue
+            
+            log_event("RESEARCHER_COMPLETED", {
+                "query": query,
+                "notes_created": len(research_notes),
+                "notes_stored": notes_stored
+            })
+            log_debug(f"[RESEARCHER] Research complete: {notes_stored} notes stored")
+            
+        except Exception as e:
+            log_debug(f"[RESEARCHER] Error in researcher: {e}")
+            log_event("RESEARCHER_ERROR", {
+                "query": query,
+                "error": str(e)
+            })
     
     async def delete_note(self, note_id: str) -> bool:
         """Deletes a note from Graph and Vector Store."""
@@ -251,7 +345,7 @@ class MemoryController:
             await loop.run_in_executor(None, self.storage.reset)
             return True
         except Exception as e:
-            print(f"Error resetting memory: {e}")
+            log_debug(f"Error resetting memory: {e}")
             return False
 
     async def list_notes_data(self) -> List[Dict[str, Any]]:
@@ -398,7 +492,7 @@ class MemoryController:
             )
             self.storage.graph.add_edge(relation)
             self.storage.graph.save_snapshot()
-            return {"status": "edge_added", "relation": relation.model_dump()}
+            return {"status": "edge_added", "relation": relation.model_dump(mode='json')}
 
         return await loop.run_in_executor(None, _add)
 
@@ -425,7 +519,7 @@ class MemoryController:
             auto_save_interval_minutes: Intervall in Minuten für automatisches Speichern (default: 5.0)
         """
         if self._enzyme_scheduler_running:
-            print("[WARNING] Enzyme-Scheduler läuft bereits")
+            log_debug("[WARNING] Enzyme-Scheduler läuft bereits")
             return
         
         self._enzyme_scheduler_running = True
@@ -437,7 +531,7 @@ class MemoryController:
         self._auto_save_task = asyncio.create_task(
             self._auto_save_loop(auto_save_interval_minutes)
         )
-        print(f"[OK] Enzyme-Scheduler gestartet (Intervall: {interval_hours}h, Auto-Save: {auto_save_interval_minutes}min)")
+        log_debug(f"[OK] Enzyme-Scheduler gestartet (Intervall: {interval_hours}h, Auto-Save: {auto_save_interval_minutes}min)")
         log_event("ENZYME_SCHEDULER_STARTED", {
             "interval_hours": interval_hours,
             "auto_save_interval_minutes": auto_save_interval_minutes
@@ -450,7 +544,7 @@ class MemoryController:
             self._enzyme_scheduler_running = False
         if self._auto_save_task:
             self._auto_save_task.cancel()
-        print("[STOP] Enzyme-Scheduler gestoppt")
+        log_debug("[STOP] Enzyme-Scheduler gestoppt")
         log_event("ENZYME_SCHEDULER_STOPPED", {})
     
     async def _enzyme_scheduler_loop(self, interval_hours: float):
@@ -468,7 +562,7 @@ class MemoryController:
                 await asyncio.sleep(interval_seconds)
                 
                 # Führe Enzyme aus
-                print(f"[SCHEDULER] Führe Memory-Enzyme aus...")
+                log_debug(f"[SCHEDULER] Führe Memory-Enzyme aus...")
                 loop = asyncio.get_running_loop()
                 
                 def _run_enzymes():
@@ -491,7 +585,7 @@ class MemoryController:
                 await loop.run_in_executor(None, self.storage.graph.save_snapshot)
                 
                 zombie_count = results.get('zombie_nodes_removed', 0)
-                print(f"[OK] [Scheduler] Enzyme abgeschlossen: {results['pruned_count']} links pruned, {zombie_count} zombie nodes removed, {results['suggestions_count']} suggested, {results['digested_count']} digested")
+                log_debug(f"[OK] [Scheduler] Enzyme abgeschlossen: {results['pruned_count']} links pruned, {zombie_count} zombie nodes removed, {results['suggestions_count']} suggested, {results['digested_count']} digested")
                 
                 log_event("ENZYME_SCHEDULER_RUN", {
                     "results": results,
@@ -499,10 +593,10 @@ class MemoryController:
                 })
                 
             except asyncio.CancelledError:
-                print("[STOP] [Scheduler] Wurde gestoppt")
+                log_debug("[STOP] [Scheduler] Wurde gestoppt")
                 break
             except Exception as e:
-                print(f"[ERROR] [Scheduler] Fehler bei Enzyme-Ausführung: {e}")
+                log_debug(f"[ERROR] [Scheduler] Fehler bei Enzyme-Ausführung: {e}")
                 log_event("ENZYME_SCHEDULER_ERROR", {
                     "error": str(e)
                 })
@@ -526,14 +620,14 @@ class MemoryController:
                 # Speichere Graph
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self.storage.graph.save_snapshot)
-                print(f"[SAVE] [Auto-Save] Graph saved to disk")
+                log_debug(f"[SAVE] [Auto-Save] Graph saved to disk")
                 log_event("AUTO_SAVE", {"interval_minutes": interval_minutes})
                 
             except asyncio.CancelledError:
-                print("[STOP] [Auto-Save] Wurde gestoppt")
+                log_debug("[STOP] [Auto-Save] Wurde gestoppt")
                 break
             except Exception as e:
-                print(f"[ERROR] [Auto-Save] Fehler beim Speichern: {e}")
+                log_debug(f"[ERROR] [Auto-Save] Fehler beim Speichern: {e}")
                 log_event("AUTO_SAVE_ERROR", {"error": str(e)})
                 # Warte kurz bevor Retry
                 await asyncio.sleep(30)  # 30 Sekunden

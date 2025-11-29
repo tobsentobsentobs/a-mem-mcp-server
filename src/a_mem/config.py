@@ -59,6 +59,32 @@ class Config:
     TCP_SERVER_ENABLED = os.getenv("TCP_SERVER_ENABLED", "false").lower() == "true"
     TCP_SERVER_HOST = os.getenv("TCP_SERVER_HOST", "127.0.0.1")
     TCP_SERVER_PORT = int(os.getenv("TCP_SERVER_PORT", "42424"))
+    
+    # Researcher Agent Settings
+    RESEARCHER_ENABLED = os.getenv("RESEARCHER_ENABLED", "false").lower() == "true"
+    RESEARCHER_CONFIDENCE_THRESHOLD = float(os.getenv("RESEARCHER_CONFIDENCE_THRESHOLD", "0.5"))
+    RESEARCHER_MAX_SOURCES = int(os.getenv("RESEARCHER_MAX_SOURCES", "5"))
+    RESEARCHER_MAX_CONTENT_LENGTH = int(os.getenv("RESEARCHER_MAX_CONTENT_LENGTH", "10000"))
+    
+    # Jina Reader Settings (local Docker)
+    JINA_READER_ENABLED = os.getenv("JINA_READER_ENABLED", "true").lower() == "true"
+    JINA_READER_HOST = os.getenv("JINA_READER_HOST", "localhost")
+    JINA_READER_PORT = int(os.getenv("JINA_READER_PORT", "2222"))
+    JINA_READER_URL = f"http://{JINA_READER_HOST}:{JINA_READER_PORT}"
+    
+    # Unstructured Settings (for PDF extraction)
+    UNSTRUCTURED_ENABLED = os.getenv("UNSTRUCTURED_ENABLED", "true").lower() == "true"
+    UNSTRUCTURED_API_URL = os.getenv("UNSTRUCTURED_API_URL", "http://localhost:8000")
+    UNSTRUCTURED_API_KEY = os.getenv("UNSTRUCTURED_API_KEY", "")
+    UNSTRUCTURED_USE_LIBRARY = os.getenv("UNSTRUCTURED_USE_LIBRARY", "true").lower() == "true"  # Use library directly (default: true, falls back to API if library fails)
+    
+    # Google Search API Settings (for web search)
+    GOOGLE_SEARCH_ENABLED = os.getenv("GOOGLE_SEARCH_ENABLED", "true").lower() == "true"
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyDiZaKRMGrho3LT3eftvR9r9S3LLgh5X4w")
+    GOOGLE_SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID", "c7bf0393f031a4691")
+    
+    # Cache file for amem_stats --diff
+    AMEM_STATS_CACHE_FILE = DATA_DIR / "amem_stats_cache.json"
 
     def __init__(self):
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)
