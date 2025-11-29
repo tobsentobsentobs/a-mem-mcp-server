@@ -115,6 +115,16 @@ The system automatically runs memory enzymes every hour:
 - Logs all maintenance activities
 - Gracefully handles errors and continues running
 
+### Researcher Agent
+Deep web research for low-confidence queries with JIT context optimization:
+- **Automatic Triggering**: Activates when retrieval confidence < threshold (default: 0.5)
+- **Manual Research**: Available via `research_and_store` MCP tool
+- **Hybrid Approach**: Uses MCP tools (if available) or HTTP-based fallbacks
+- **Web Search**: Google Search API (primary) or DuckDuckGo HTTP (fallback)
+- **Content Extraction**: Jina Reader (local Docker or cloud API) or Readability fallback
+- **PDF Support**: Automatic PDF extraction using Unstructured (library or API)
+- **Automatic Note Creation**: Research findings are automatically stored as atomic notes with metadata, keywords, and tags
+
 ## 📋 Installation
 
 ### 1. Install Dependencies
